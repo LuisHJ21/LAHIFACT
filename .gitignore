@@ -1,0 +1,13 @@
+**/node_modules/
+**/vendor/
+**/.env
+**/dist/
+**/coverage/
+**/test-results/
+**/playwright-report/
+**/*.tsbuildinfo
+**/.phpunit.result.cache
+**/database.sqlite
+*.p12
+*.pfx
+*.pem

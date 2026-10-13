@@ -36,8 +36,9 @@ import {
   type Submission,
 } from "../types";
 
-export function Invoices({ notes = false }: { notes?: boolean }) {
-  const { notify } = useApp();
+export function Invoices({ notes = false, readOnly = false }: { notes?: boolean; readOnly?: boolean }) {
+  const { notify, user } = useApp();
+  const canWrite = !readOnly && user?.role !== "admin";
   const [version, setVersion] = useState(0);
   const [page, setPage] = useState(1);
   const [search, setSearch] = useState("");
@@ -71,11 +72,11 @@ export function Invoices({ notes = false }: { notes?: boolean }) {
         title={notes ? "Notas de crédito y débito" : "Facturas y boletas"}
         subtitle={
           notes
-            ? "Ajusta operaciones con referencia a un comprobante aceptado."
-            : "Registra tus ventas y sigue su aceptación en SUNAT."
+            ? canWrite ? "Ajusta operaciones con referencia a un comprobante aceptado." : "Historial de notas de crédito y débito de esta empresa."
+            : canWrite ? "Registra tus ventas y sigue su aceptación en SUNAT." : "Historial de facturas y boletas de esta empresa."
         }
         action={
-          <button className="button primary" onClick={() => setCreate(true)}>
+          canWrite && <button className="button primary" onClick={() => setCreate(true)}>
             <Plus size={18} />
             {notes ? "Emitir nota" : "Emitir comprobante"}
           </button>
@@ -159,13 +160,13 @@ export function Invoices({ notes = false }: { notes?: boolean }) {
             />
           </label>
         </div>
-        <ErrorBox message={error} />
-        {loading && !data ? (
+        <ErrorBox message={error} onRetry={() => setVersion((value) => value + 1)} />
+        {loading ? (
           <Loading />
-        ) : !data?.data.length ? (
+        ) : error ? null : !data?.data.length ? (
           <Empty
             title="No se encontraron comprobantes"
-            text="Emite un comprobante o ajusta los filtros de búsqueda."
+            text={canWrite ? "Emite un comprobante o ajusta los filtros de búsqueda." : "Esta empresa no tiene comprobantes para los filtros seleccionados."}
           />
         ) : (
           <div className="table-wrap">
@@ -216,16 +217,18 @@ export function Invoices({ notes = false }: { notes?: boolean }) {
             </table>
           </div>
         )}
-        {data && (
+        {data && !loading && !error && (
           <Pager
             current={data.current_page}
             last={data.last_page}
             total={data.total}
+            from={data.from}
+            to={data.to}
             onChange={setPage}
           />
         )}
       </section>
-      {create && (
+      {canWrite && create && (
         <InvoiceForm
           notes={notes}
           onClose={() => setCreate(false)}
@@ -242,6 +245,7 @@ export function Invoices({ notes = false }: { notes?: boolean }) {
       {selected && (
         <InvoiceDetail
           id={selected}
+          readOnly={!canWrite}
           onClose={() => {
             setSelected(null);
             setVersion((v) => v + 1);
@@ -689,11 +693,14 @@ function InvoiceForm({
 export function InvoiceDetail({
   id,
   onClose,
+  readOnly = false,
 }: {
   id: number;
   onClose: () => void;
+  readOnly?: boolean;
 }) {
-  const { notify } = useApp();
+  const { notify, user } = useApp();
+  const canWrite = !readOnly && user?.role !== "admin";
   const [version, setVersion] = useState(0);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -801,7 +808,7 @@ export function InvoiceDetail({
                 <strong>Total: {money(invoice.totals.total)}</strong>
               </div>
               <div className="detail-actions">
-                {["draft", "rejected"].includes(invoice.status) && (
+                {canWrite && ["draft", "rejected"].includes(invoice.status) && (
                   <button
                     className="button primary"
                     disabled={busy}
@@ -834,7 +841,7 @@ export function InvoiceDetail({
                   <Printer size={16} />
                   Ticket 80 mm
                 </button>
-                {!invoice.delivered && (
+                {canWrite && !invoice.delivered && (
                   <button
                     disabled={busy}
                     className="button secondary"
@@ -845,7 +852,7 @@ export function InvoiceDetail({
                     Marcar entregado al cliente
                   </button>
                 )}
-                {invoice.status === "accepted" && !invoice.delivered && (
+                {canWrite && invoice.status === "accepted" && !invoice.delivered && (
                   <button
                     className="button danger"
                     disabled={busy}
@@ -883,7 +890,7 @@ export function InvoiceDetail({
                     <p>{s.message || "Envío programado."}</p>
                     {s.ticket && <small>Ticket: {s.ticket}</small>}
                     <div className="detail-actions">
-                      {!["accepted", "rejected"].includes(s.status) && (
+                      {canWrite && !["accepted", "rejected"].includes(s.status) && (
                         <button
                           disabled={busy}
                           className="button secondary small"

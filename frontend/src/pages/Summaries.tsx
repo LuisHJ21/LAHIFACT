@@ -148,6 +148,8 @@ export function Summaries() {
             current={documents.current_page}
             last={documents.last_page}
             total={documents.total}
+            from={documents.from}
+            to={documents.to}
             onChange={setPage}
           />
         )}

@@ -10,15 +10,16 @@ import {
 import { money, date, today, type Account as AccountData } from "../types";
 import { download, errorMessage } from "../api";
 import { useApp } from "../context";
-export function Account() {
-  const { data, loading, error } = useData<AccountData>("/account");
+export function Account({ administrative = false }: { administrative?: boolean }) {
+  const [version, setVersion] = useState(0);
+  const { data, loading, error } = useData<AccountData>("/account", version);
   if (loading) return <Loading />;
-  if (!data) return <ErrorBox message={error} />;
+  if (!data || error) return <ErrorBox message={error || "No se pudo cargar la cuenta."} onRetry={() => setVersion((value) => value + 1)} />;
   return (
     <>
       <PageHeader
-        title="Datos de cuenta"
-        subtitle="Tu plan, disponibilidad y pagos en un solo lugar."
+        title={administrative ? "Pagos y periodos de la empresa" : "Datos de cuenta"}
+        subtitle={administrative ? "Consulta del plan, disponibilidad y pagos del servicio contratado." : "Tu plan, disponibilidad y pagos en un solo lugar."}
       />
       <div className="stats-grid">
         <article className="stat-card">

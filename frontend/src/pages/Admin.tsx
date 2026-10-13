@@ -1,11 +1,11 @@
 import { useState, type FormEvent } from "react";
 import {
   Plus,
-  Building2,
   Pencil,
-  ArrowRight,
-  Ban,
-  CheckCircle2,
+  Users,
+  Building2,
+  Layers3,
+  CreditCard,
 } from "lucide-react";
 import { useApp } from "../context";
 import {
@@ -27,6 +27,9 @@ import {
   type Period,
   type Payment,
 } from "../types";
+import { AdminCompanies } from "../components/AdminCompanies";
+import { ServiceStatusCard } from "../components/ServiceStatusCard";
+import { adminNavigation, type AdminTab } from "../adminNavigation";
 type AdminData = {
   companies: Company[];
   plans: Plan[];
@@ -41,9 +44,14 @@ type Field = {
   type?: string;
   options?: [string, string][];
 };
-export function Admin({ navigate }: { navigate: (page: string) => void }) {
-  const { selectCompany, reloadCompanies, notify } = useApp();
-  const [tab, setTab] = useState("companies");
+export function Admin({ onCompanyDetail, tab, onTabChange, paymentCompanyId, onPaymentCompanyChange }: {
+  onCompanyDetail: (company: Company) => void;
+  tab: AdminTab;
+  onTabChange: (tab: AdminTab) => void;
+  paymentCompanyId: number | null;
+  onPaymentCompanyChange: (id: number | null) => void;
+}) {
+  const { companyId, reloadCompanies, notify } = useApp();
   const [version, setVersion] = useState(0);
   const [modal, setModal] = useState<{
     path: string;
@@ -55,6 +63,8 @@ export function Admin({ navigate }: { navigate: (page: string) => void }) {
   const [form, setForm] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [statusCompany, setStatusCompany] = useState<Company | null>(null);
+  const [statusBusyId, setStatusBusyId] = useState<number | null>(null);
   const {
     data,
     loading,
@@ -124,7 +134,7 @@ export function Admin({ navigate }: { navigate: (page: string) => void }) {
           {
             key: "billing_period_id",
             label: "Empresa y periodo",
-            options: data?.periods.map((p) => [
+            options: data?.periods.filter((period) => paymentCompanyId === null || period.company_id === paymentCompanyId).map((p) => [
               String(p.id),
               `${data.companies.find((c) => c.id === p.company_id)?.name} · ${date(p.starts_at)} · ${money(p.price)}`,
             ]),
@@ -168,153 +178,101 @@ export function Admin({ navigate }: { navigate: (page: string) => void }) {
         modal.fields.map((f) => [f.key, form[f.key] || ""]),
       );
       await api[modal.method || "post"](modal.path, payload);
-      await reloadCompanies();
       setVersion((v) => v + 1);
       setModal(null);
       notify("Datos guardados correctamente.");
+      await reloadCompanies().catch((e) => notify(`Los datos se guardaron, pero no se pudo actualizar la lista de empresas: ${errorMessage(e)}`, true));
     } catch (e) {
       setError(errorMessage(e));
     } finally {
       setBusy(false);
     }
   }
-  if (loading && !data) return <Loading />;
-  if (!data) return <ErrorBox message={loadError} />;
+  async function changeStatus() {
+    if (!statusCompany || statusBusyId !== null) return;
+    setStatusBusyId(statusCompany.id);
+    try {
+      await api.patch(`/admin/companies/${statusCompany.id}/status`, {
+        status: statusCompany.status === "active" ? "suspended" : "active",
+      });
+      setVersion((value) => value + 1);
+      setStatusCompany(null);
+      await reloadCompanies();
+      notify("Estado de la empresa actualizado.");
+    } catch (e) {
+      notify(errorMessage(e), true);
+    } finally {
+      setStatusBusyId(null);
+    }
+  }
+  if (loading) return <div className="admin-loading" role="status" aria-label="Cargando administración"><div className="stats-grid">{[1, 2, 3, 4].map((key) => <div key={key} className="stat-card skeleton-card" />)}</div><Loading /></div>;
+  if (!data || loadError) return <ErrorBox message={loadError || "No se pudo cargar la administración."} onRetry={() => setVersion((value) => value + 1)} />;
+  const selectedCompany = data.companies.find((company) => company.id === companyId);
+  const month = today().slice(0, 7);
+  const monthlyPayments = data.payments.filter((payment) => payment.paid_at.slice(0, 7) === month).reduce((total, payment) => total + Number(payment.amount), 0);
+  const filteredPeriods = data.periods.filter((period) => paymentCompanyId === null || period.company_id === paymentCompanyId);
+  const filteredPayments = data.payments.filter((payment) => paymentCompanyId === null || payment.company_id === paymentCompanyId);
+  const paymentCompany = data.companies.find((company) => company.id === paymentCompanyId);
   return (
     <>
       <PageHeader
         title="Administración"
         subtitle="Gestiona tus empresas, planes y pagos del servicio."
         action={
-          <button className="button primary" onClick={add}>
+          <button className="button primary" onClick={add} disabled={tab === "payments" && !filteredPeriods.length} title={tab === "payments" && !filteredPeriods.length ? "No hay periodos disponibles para registrar un pago" : undefined}>
             <Plus size={18} />
-            {tab === "payments" ? "Registrar pago" : "Nuevo registro"}
+            {tab === "payments" ? "Registrar pago" : tab === "companies" ? "Registrar empresa" : tab === "plans" ? "Crear plan" : "Crear usuario"}
           </button>
         }
       />
-      <div className="stats-grid">
+      <p className="admin-scope">Indicadores globales del servicio · independientes de la empresa seleccionada.</p>
+      <div className="stats-grid admin-stats">
         <article className="stat-card">
+          <span className="admin-kpi-icon"><Building2 size={20} /></span>
           <p>Empresas</p>
           <strong>{data.companies.length}</strong>
+          <small>Total de empresas registradas</small>
         </article>
         <article className="stat-card">
+          <span className="admin-kpi-icon"><Users size={20} /></span>
           <p>Usuarios</p>
           <strong>{data.users.length}</strong>
+          <small>Usuarios del sistema administrado</small>
         </article>
         <article className="stat-card">
-          <p>Planes</p>
-          <strong>{data.plans.length}</strong>
+          <span className="admin-kpi-icon"><Layers3 size={20} /></span>
+          <p>Suscripciones registradas</p>
+          <strong>{data.subscriptions.length}</strong>
+          <small>Asignaciones de plan, sin inferir actividad</small>
         </article>
         <article className="stat-card">
-          <p>Pagos mostrados</p>
+          <span className="admin-kpi-icon"><CreditCard size={20} /></span>
+          <p>Pagos registrados del mes</p>
           <strong>
-            {money(data.payments.reduce((s, p) => s + Number(p.amount), 0))}
+            {money(monthlyPayments)}
           </strong>
+          <small>Según fecha de pago · {month}</small>
         </article>
       </div>
-      <nav className="tabs">
-        {[
-          ["companies", "Empresas"],
-          ["plans", "Planes"],
-          ["payments", "Pagos y vencimientos"],
-          ["users", "Usuarios"],
-        ].map(([v, l]) => (
+      <nav className="tabs" aria-label="Módulos administrativos">
+        {adminNavigation.map(({ id, label }) => (
           <button
-            className={tab === v ? "active" : ""}
-            key={v}
-            onClick={() => setTab(v)}
+            className={tab === id ? "active" : ""}
+            aria-current={tab === id ? "page" : undefined}
+            key={id}
+            onClick={() => onTabChange(id)}
           >
-            {l}
+            {label}
           </button>
         ))}
       </nav>
-      <section className="panel">
+      <div className={`admin-workspace ${tab === "companies" ? "with-service" : ""}`}>
+      <section className="panel admin-panel" aria-label="Contenido administrativo">
         {tab === "companies" && (
-          <div className="company-grid">
-            {data.companies.map((c) => {
-              const subscription = data.subscriptions.find(
-                (s) => s.company_id === c.id,
-              );
-              return (
-                <article className="company-card" key={c.id}>
-                  <span className="directory-icon">
-                    <Building2 />
-                  </span>
-                  <h3>{c.name}</h3>
-                  <p>RUC {c.ruc}</p>
-                  <span className="pill">
-                    {data.plans.find((p) => p.id === subscription?.plan_id)
-                      ?.name || "Sin plan"}{" "}
-                    ·{" "}
-                    {subscription?.frequency === "annual" ? "Anual" : "Mensual"}
-                  </span>
-                  <div className="detail-actions">
-                    <button
-                      className="button primary small"
-                      onClick={() => {
-                        selectCompany(c.id);
-                        navigate("dashboard");
-                      }}
-                    >
-                      Abrir empresa
-                      <ArrowRight size={14} />
-                    </button>
-                    <button
-                      className="button secondary small"
-                      onClick={() =>
-                        open({
-                          path: `/admin/companies/${c.id}/plan`,
-                          title: "Cambiar plan para futuros periodos",
-                          fields: [
-                            {
-                              key: "plan_id",
-                              label: "Plan",
-                              options: planOptions,
-                            },
-                          ],
-                          values: { plan_id: subscription?.plan_id },
-                        })
-                      }
-                    >
-                      <Pencil size={14} />
-                      Plan
-                    </button>
-                    <button
-                      className="icon-button"
-                      aria-label={
-                        c.status === "active"
-                          ? "Suspender empresa"
-                          : "Activar empresa"
-                      }
-                      onClick={async () => {
-                        try {
-                          await api.patch(`/admin/companies/${c.id}/status`, {
-                            status:
-                              c.status === "active" ? "suspended" : "active",
-                          });
-                          setVersion((v) => v + 1);
-                          await reloadCompanies();
-                        } catch (e) {
-                          notify(errorMessage(e), true);
-                        }
-                      }}
-                    >
-                      {c.status === "active" ? (
-                        <Ban size={18} />
-                      ) : (
-                        <CheckCircle2 size={18} />
-                      )}
-                    </button>
-                  </div>
-                  <small>
-                    Estado manual:{" "}
-                    {c.status === "active" ? "Activo" : "Suspendido"}. Los
-                    impagos también suspenden el servicio.
-                  </small>
-                </article>
-              );
-            })}
-          </div>
+          <AdminCompanies companies={data.companies} plans={data.plans} subscriptions={data.subscriptions} periods={data.periods} busyId={statusBusyId}
+            onOpen={onCompanyDetail}
+            onPlan={(company, subscription) => open({ path: `/admin/companies/${company.id}/plan`, title: "Cambiar plan para futuros periodos", fields: [{ key: "plan_id", label: "Plan", options: planOptions }], values: { plan_id: subscription?.plan_id } })}
+            onStatus={setStatusCompany} onCreate={add} />
         )}
         {tab === "plans" && (
           <div className="table-wrap">
@@ -366,6 +324,17 @@ export function Admin({ navigate }: { navigate: (page: string) => void }) {
         )}
         {tab === "payments" && (
           <>
+            <div className="panel-heading admin-payment-toolbar">
+              <div><h2>Pagos y vencimientos</h2><p>{paymentCompanyId === null ? "Todas las empresas administradas." : paymentCompany ? `${paymentCompany.name} · RUC ${paymentCompany.ruc}` : "La empresa filtrada ya no está disponible."}</p></div>
+              <label>Filtrar pagos por empresa
+                <select value={paymentCompanyId ?? ""} onChange={(event) => onPaymentCompanyChange(event.target.value ? Number(event.target.value) : null)}>
+                  <option value="">Todas las empresas</option>
+                  {paymentCompanyId !== null && !paymentCompany && <option value={paymentCompanyId}>Empresa no disponible</option>}
+                  {data.companies.map((company) => <option key={company.id} value={company.id}>{company.name}</option>)}
+                </select>
+              </label>
+              {paymentCompanyId !== null && <button className="button secondary small" onClick={() => onPaymentCompanyChange(null)}>Ver todas las empresas</button>}
+            </div>
             <div className="panel-heading">
               <div>
                 <h2>Programación de pagos</h2>
@@ -373,7 +342,7 @@ export function Admin({ navigate }: { navigate: (page: string) => void }) {
               </div>
             </div>
             <div className="table-wrap">
-              <table>
+              <table aria-label="Periodos y saldos">
                 <thead>
                   <tr>
                     <th>Empresa</th>
@@ -383,7 +352,7 @@ export function Admin({ navigate }: { navigate: (page: string) => void }) {
                   </tr>
                 </thead>
                 <tbody>
-                  {data.periods.map((p) => (
+                  {filteredPeriods.map((p) => (
                     <tr key={p.id}>
                       <td>
                         {
@@ -418,11 +387,12 @@ export function Admin({ navigate }: { navigate: (page: string) => void }) {
                 </tbody>
               </table>
             </div>
+            {!filteredPeriods.length && <Empty title="No hay periodos para esta selección" text="Selecciona otra empresa o registra una empresa con un plan contratado." />}
             <div className="panel-heading">
               <h2>Pagos registrados</h2>
             </div>
             <div className="table-wrap">
-              <table>
+              <table aria-label="Pagos registrados">
                 <thead>
                   <tr>
                     <th>Empresa</th>
@@ -432,7 +402,7 @@ export function Admin({ navigate }: { navigate: (page: string) => void }) {
                   </tr>
                 </thead>
                 <tbody>
-                  {data.payments.map((p) => (
+                  {filteredPayments.map((p) => (
                     <tr key={p.id}>
                       <td>
                         {
@@ -448,6 +418,7 @@ export function Admin({ navigate }: { navigate: (page: string) => void }) {
                 </tbody>
               </table>
             </div>
+            {!filteredPayments.length && <Empty title="No hay pagos para esta selección" text="Los pagos registrados para esta empresa aparecerán aquí." />}
           </>
         )}
         {tab === "users" && (
@@ -519,8 +490,19 @@ export function Admin({ navigate }: { navigate: (page: string) => void }) {
             </table>
           </div>
         )}
-        {!data.companies.length && <Empty title="Crea tu primera empresa" />}
+        {tab === "plans" && !data.plans.length && <Empty title="Aún no hay planes" text="Crea un plan para asignarlo a tus empresas." action={<button className="button primary" onClick={add}>Crear plan</button>} />}
+        {tab === "users" && !data.users.length && <Empty title="Aún no hay usuarios" text="Registra los usuarios de tus empresas." action={<button className="button primary" onClick={add}>Crear usuario</button>} />}
       </section>
+      {tab === "companies" && selectedCompany && <ServiceStatusCard key={selectedCompany.id} company={selectedCompany} version={version} onPayments={() => { onPaymentCompanyChange(selectedCompany.id); onTabChange("payments"); }} />}
+      </div>
+      {tab === "companies" && <section className="panel" aria-label="Pagos recientes"><div className="panel-heading"><div><h2>Pagos recientes</h2><p>Últimos pagos registrados de todas las empresas, ordenados por fecha de pago.</p></div><button className="button secondary small" onClick={() => { onPaymentCompanyChange(null); onTabChange("payments"); }}>Ver todos</button></div>
+        {data.payments.length ? <ul className="admin-payment-list">{[...data.payments].sort((a, b) => b.paid_at.localeCompare(a.paid_at) || b.id - a.id).slice(0, 5).map((payment) => <li key={payment.id}><span className="admin-kpi-icon"><CreditCard size={18} /></span><div><strong>{data.companies.find((company) => company.id === payment.company_id)?.name || "Empresa no disponible"}</strong><small>{payment.reference} · {date(payment.paid_at)}</small></div><strong>{money(payment.amount)}</strong></li>)}</ul> : <Empty title="Aún no hay pagos registrados" text="Los pagos aparecerán aquí después de registrarlos." />}
+      </section>}
+      {statusCompany && <Modal title={statusCompany.status === "active" ? "Suspender empresa" : "Activar empresa"} onClose={() => { if (statusBusyId === null) setStatusCompany(null); }}>
+        <div className="modal-body"><p>¿Confirmas {statusCompany.status === "active" ? "suspender" : "activar"} a <strong>{statusCompany.name}</strong>?</p><p className="admin-table-note">Esta acción cambia el estado manual. Las reglas de pagos y vencimientos siguen aplicándose.</p>
+          <div className="form-actions"><button className="button secondary" disabled={statusBusyId !== null} onClick={() => setStatusCompany(null)}>Cancelar</button><button className="button primary" disabled={statusBusyId !== null} onClick={changeStatus}>{statusBusyId !== null ? "Actualizando…" : "Confirmar"}</button></div>
+        </div>
+      </Modal>}
       {modal && (
         <Modal
           title={modal.title}

@@ -1,4 +1,5 @@
 import { useEffect, useState, type FormEvent } from "react";
+import axios from "axios";
 import {
   Plus,
   Search,
@@ -8,6 +9,7 @@ import {
   Warehouse,
   MapPin,
   Hash,
+  X,
 } from "lucide-react";
 import { useApp } from "../context";
 import { api, errorMessage } from "../api";
@@ -68,18 +70,28 @@ export function Directory({
   const { catalogs, notify } = useApp();
   const [version, setVersion] = useState(0);
   const [search, setSearch] = useState("");
+  const [query, setQuery] = useState("");
   const [page, setPage] = useState(1);
   const [editing, setEditing] = useState<Row | null>(null);
   const [form, setForm] = useState<Row>({});
   const [file, setFile] = useState<File | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [fieldErrors, setFieldErrors] = useState<Record<string, string[]>>({});
+  useEffect(() => {
+    if (search.trim() === query) return;
+    const timer = setTimeout(() => {
+      setQuery(search.trim());
+      setPage(1);
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [search, query]);
   const {
     data,
     loading,
     error: loadError,
   } = useData<Page<Row>>(
-    `/${resource}?search=${encodeURIComponent(search)}&page=${page}`,
+    `/${resource}?search=${encodeURIComponent(query)}&page=${page}`,
     version,
   );
   const { data: establishments } = useData<Page<Row>>(
@@ -180,6 +192,7 @@ export function Directory({
   function open(row: Row = {}) {
     setEditing(row);
     setError("");
+    setFieldErrors({});
     setFile(null);
     setForm({
       document_type: resource === "series" ? "01" : "6",
@@ -193,6 +206,7 @@ export function Directory({
     event.preventDefault();
     setBusy(true);
     setError("");
+    setFieldErrors({});
     try {
       const payload: Record<string, unknown> = {};
       config.fields.forEach((f) => {
@@ -217,10 +231,23 @@ export function Directory({
       notify("Registro guardado correctamente.");
     } catch (e) {
       setError(errorMessage(e));
+      if (axios.isAxiosError(e) && e.response?.status === 422) {
+        setFieldErrors(e.response.data.errors || {});
+      }
     } finally {
       setBusy(false);
     }
   }
+  const clearSearch = () => {
+    setSearch("");
+    setQuery("");
+    setPage(1);
+  };
+  const searchPlaceholder = resource === "customers"
+    ? "Buscar por nombre o documento…"
+    : resource === "products"
+      ? "Buscar por nombre o código…"
+      : resource === "series" ? "Buscar por serie…" : "Buscar por nombre…";
   return (
     <>
       <PageHeader
@@ -233,36 +260,42 @@ export function Directory({
           </button>
         }
       />
-      <section className="panel">
-        <div className="toolbar">
+      <section className="panel directory-panel" aria-label={`Directorio de ${config.title.toLowerCase()}`} aria-busy={loading}>
+        <div className="toolbar directory-toolbar">
           <label className="search">
             <Search size={18} />
             <input
               aria-label="Buscar registros"
-              placeholder="Buscar por nombre, código o documento…"
+              placeholder={searchPlaceholder}
               value={search}
               onChange={(e) => {
                 setSearch(e.target.value);
-                setPage(1);
               }}
             />
+            {search && <button type="button" className="icon-button" aria-label="Limpiar búsqueda" onClick={clearSearch}><X size={18} /></button>}
           </label>
-          <span className="pill">{data?.total || 0} registros</span>
+          <span className="pill" role="status">{loading || search.trim() !== query ? "Buscando…" : loadError ? "Sin información" : `${data?.total || 0} registros`}</span>
         </div>
-        <ErrorBox message={loadError} />
         {loading ? (
           <Loading />
+        ) : loadError ? (
+          <div className="directory-error"><ErrorBox message={loadError} onRetry={() => setVersion((v) => v + 1)} /></div>
         ) : !data?.data.length ? (
-          <Empty />
+          <Empty
+            icon={query ? <Search size={32} /> : <config.icon size={32} />}
+            title={query ? "No encontramos resultados" : resource === "warehouses" ? "Aún no hay almacenes" : `Aún no hay ${config.title.toLowerCase()}`}
+            text={query ? "Prueba con otra búsqueda." : resource === "warehouses" ? "Registra tu primer almacén para organizar mejor tus operaciones." : "Crea tu primer registro para empezar a organizar este directorio."}
+            action={<button type="button" className={`button ${query ? "secondary" : "primary"}`} onClick={query ? clearSearch : () => open()}>{query ? "Limpiar búsqueda" : resource === "warehouses" ? "Crear primer almacén" : "Nuevo registro"}</button>}
+          />
         ) : (
           <div className="table-wrap">
             <table>
               <thead>
                 <tr>
-                  <th>{resource === "series" ? "Serie" : "Nombre"}</th>
-                  <th>Información</th>
+                  <th scope="col">{resource === "series" ? "Serie" : resource === "warehouses" ? "Nombre del almacén" : "Nombre"}</th>
+                  <th scope="col">{resource === "warehouses" ? "Dirección" : "Información"}</th>
                   {resource === "products" && <th>Precio final</th>}
-                  <th>Acciones</th>
+                  <th scope="col" className="actions-column">Acciones</th>
                 </tr>
               </thead>
               <tbody>
@@ -280,7 +313,7 @@ export function Directory({
                               ? row.document_number
                               : resource === "products"
                                 ? row.code
-                                : row.address}
+                                 : resource === "warehouses" ? null : row.address}
                           </small>
                         </div>
                       </div>
@@ -317,7 +350,7 @@ export function Directory({
                           <small>{row.phone}</small>
                         </>
                       ) : (
-                        row.code || "Almacén"
+                         resource === "warehouses" ? row.address : row.code
                       )}{" "}
                     </td>
                     {resource === "products" && (
@@ -325,7 +358,7 @@ export function Directory({
                         {money(String(row.price))}
                       </td>
                     )}
-                    <td>
+                    <td className="actions-column">
                       <button
                         className="button secondary small"
                         onClick={() => open(row)}
@@ -340,11 +373,13 @@ export function Directory({
             </table>
           </div>
         )}
-        {data && (
+        {!loading && !loadError && data && (
           <Pager
             current={data.current_page}
             last={data.last_page}
             total={data.total}
+            from={data.from}
+            to={data.to}
             onChange={setPage}
           />
         )}
@@ -361,9 +396,12 @@ export function Directory({
             <div className="form-grid">
               {config.fields.map((field) => (
                 <label key={field.key}>
-                  {field.label}
+                  <span>{field.label}{field.required !== false && <span className="required-mark" aria-hidden="true"> *</span>}</span>
                   {field.options ? (
                     <select
+                      aria-label={field.label}
+                      aria-invalid={!!fieldErrors[field.key]}
+                      aria-describedby={fieldErrors[field.key] ? `${resource}-${field.key}-error` : undefined}
                       required={field.required !== false}
                       value={String(form[field.key] ?? "")}
                       onChange={(e) => {
@@ -388,6 +426,9 @@ export function Directory({
                     </select>
                   ) : (
                     <input
+                      aria-label={field.label}
+                      aria-invalid={!!fieldErrors[field.key]}
+                      aria-describedby={fieldErrors[field.key] ? `${resource}-${field.key}-error` : undefined}
                       type={field.type || "text"}
                       step={field.type === "number" ? "0.000001" : undefined}
                       min={field.type === "number" ? "0.01" : undefined}
@@ -399,6 +440,7 @@ export function Directory({
                       }
                     />
                   )}
+                  {fieldErrors[field.key] && <small className="field-error" id={`${resource}-${field.key}-error`}>{fieldErrors[field.key].join(" ")}</small>}
                 </label>
               ))}
             </div>

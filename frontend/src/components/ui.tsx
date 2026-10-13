@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import {
   LoaderCircle,
   X,
@@ -40,7 +40,7 @@ export function Status({ value }: { value: string }) {
 }
 export function Loading() {
   return (
-    <div className="empty">
+    <div className="empty" role="status" aria-live="polite">
       <LoaderCircle className="animate-spin" size={26} />
       <span>Cargando información…</span>
     </div>
@@ -49,22 +49,28 @@ export function Loading() {
 export function Empty({
   title = "Aún no hay registros",
   text = "Los nuevos registros aparecerán aquí.",
+  icon = <Inbox size={36} />,
+  action,
 }: {
   title?: string;
   text?: string;
+  icon?: ReactNode;
+  action?: ReactNode;
 }) {
   return (
     <div className="empty">
-      <Inbox size={36} />
+      <div className="empty-icon" aria-hidden="true">{icon}</div>
       <strong>{title}</strong>
       <span>{text}</span>
+      {action}
     </div>
   );
 }
-export function ErrorBox({ message }: { message: string }) {
+export function ErrorBox({ message, onRetry }: { message: string; onRetry?: () => void }) {
   return message ? (
     <div role="alert" className="error-box">
       {message}
+      {onRetry && <button type="button" className="button secondary" onClick={onRetry}>Reintentar</button>}
     </div>
   ) : null;
 }
@@ -99,18 +105,19 @@ export function Modal({
   onClose: () => void;
   wide?: boolean;
 }) {
+  const dialogRef = useRef<HTMLElement>(null);
+  const closeRef = useRef(onClose);
+  closeRef.current = onClose;
   useEffect(() => {
     const previous = document.activeElement as HTMLElement | null;
-    const dialog = document.querySelector(
-      '[role="dialog"]',
-    ) as HTMLElement | null;
+    const dialog = dialogRef.current;
     const focusable = () =>
       dialog?.querySelectorAll<HTMLElement>(
-        'button,input,select,textarea,a[href],[tabindex="0"]',
+        'button:not(:disabled),input:not(:disabled),select:not(:disabled),textarea:not(:disabled),a[href],[tabindex="0"]',
       );
     focusable()?.[0]?.focus();
     const handler = (event: KeyboardEvent) => {
-      if (event.key === "Escape") onClose();
+      if (event.key === "Escape") closeRef.current();
       if (event.key === "Tab") {
         const nodes = focusable();
         if (!nodes?.length) return;
@@ -139,10 +146,11 @@ export function Modal({
     <div
       className="modal-backdrop"
       onMouseDown={(e) => {
-        if (e.target === e.currentTarget) onClose();
+        if (e.target === e.currentTarget) closeRef.current();
       }}
     >
       <section
+        ref={dialogRef}
         role="dialog"
         aria-modal="true"
         aria-label={title}
@@ -168,22 +176,28 @@ export function Pager({
   current,
   last,
   total,
+  from,
+  to,
   onChange,
 }: {
   current: number;
   last: number;
   total: number;
+  from?: number | null;
+  to?: number | null;
   onChange: (n: number) => void;
 }) {
+  if (total === 0) return null;
   return (
     <footer className="pager">
       <span>
-        {total} registros · página {current} de {last}
+        {from != null && to != null ? `Mostrando ${from}–${to} de ${total} registros` : `${total} registros`}
+        {last > 1 && ` · página ${current} de ${last}`}
       </span>
-      <div>
+      {last > 1 && <div>
         <button
           aria-label="Página anterior"
-          disabled={current === 1}
+          disabled={current <= 1}
           onClick={() => onChange(current - 1)}
         >
           <ChevronLeft size={18} />
@@ -195,7 +209,7 @@ export function Pager({
         >
           <ChevronRight size={18} />
         </button>
-      </div>
+      </div>}
     </footer>
   );
 }

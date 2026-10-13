@@ -147,6 +147,8 @@ export type Page<T> = {
   current_page: number;
   last_page: number;
   total: number;
+  from?: number | null;
+  to?: number | null;
 };
 export const money = (value: string | number) =>
   new Intl.NumberFormat("es-PE", { style: "currency", currency: "PEN" }).format(

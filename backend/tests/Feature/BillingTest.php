@@ -164,6 +164,53 @@ class BillingTest extends TestCase
         $this->assertSame([], $this->getJson('/api/v1/invoices')->json('data'));
     }
 
+    public function test_administrator_can_read_company_history_but_cannot_write_operational_records(): void
+    {
+        $invoice = $this->invoice();
+        $submission = Submission::create(['company_id' => $this->company->id, 'kind' => 'document', 'identifier' => 'DOC-admin', 'environment' => 'beta', 'reference_date' => today(), 'document_ids' => [$invoice->id], 'status' => 'queued']);
+        $admin = User::factory()->create(['role' => 'admin', 'company_id' => null]);
+        Sanctum::actingAs($admin);
+        $this->withHeader('X-Company-Id', $this->company->id);
+        $this->getJson('/api/v1/invoices')->assertOk()->assertJsonPath('total', 1);
+        $this->getJson('/api/v1/invoices/'.$invoice->id)->assertOk()->assertJsonPath('invoice.id', $invoice->id);
+        $this->getJson('/api/v1/submissions')->assertOk()->assertJsonPath('total', 1);
+        $this->getJson('/api/v1/account')->assertOk();
+
+        foreach (['/invoices', '/invoices/'.$invoice->id.'/deliver', '/submissions', '/submissions/'.$submission->id.'/retry', '/company', '/customers', '/products', '/warehouses', '/series', '/establishments'] as $path) {
+            $this->postJson('/api/v1'.$path, [])->assertForbidden()->assertJsonPath('message', 'El administrador solo puede consultar los registros operativos de las empresas.');
+        }
+        $this->putJson('/api/v1/customers/'.$this->customer->id, ['name' => 'Cambio prohibido'])->assertForbidden();
+        $this->putJson('/api/v1/products/'.$this->product->id, ['name' => 'Cambio prohibido'])->assertForbidden();
+        $this->assertDatabaseCount('invoices', 1);
+        $this->assertFalse($invoice->fresh()->delivered);
+        $this->assertSame('queued', $submission->fresh()->status);
+        $this->assertSame('Cliente & Socios', $this->customer->fresh()->name);
+
+        $other = Company::create(['ruc' => '20999999999', 'name' => 'Otra empresa']);
+        $this->withHeader('X-Company-Id', $other->id)->getJson('/api/v1/invoices/'.$invoice->id)->assertNotFound();
+        $this->getJson('/api/v1/submissions')->assertJsonPath('total', 0);
+    }
+
+    public function test_administrator_can_still_manage_saas_plans_and_payments(): void
+    {
+        Sanctum::actingAs(User::factory()->create(['role' => 'admin', 'company_id' => null]));
+        $this->postJson('/api/v1/admin/plans', ['name' => 'Nuevo plan', 'monthly_quota' => 10, 'annual_quota' => 100, 'user_limit' => 5, 'monthly_price' => 20, 'annual_price' => 200])->assertCreated();
+        $period = app(SubscriptionService::class)->current($this->company);
+        $this->postJson('/api/v1/admin/payments', ['billing_period_id' => $period->id, 'amount' => 1, 'paid_at' => '2026-01-31', 'reference' => 'Pago administrativo'])->assertCreated();
+        $this->getJson('/api/v1/admin')->assertOk();
+        $this->assertDatabaseHas('plans', ['name' => 'Nuevo plan']);
+        $this->assertDatabaseHas('payments', ['reference' => 'Pago administrativo']);
+    }
+
+    public function test_company_owner_can_still_create_operational_records(): void
+    {
+        Sanctum::actingAs($this->owner);
+        $this->postJson('/api/v1/invoices', ['document_series_id' => $this->series->id, 'customer_id' => $this->customer->id, 'issued_at' => '2026-01-31', 'items' => [['product_id' => $this->product->id, 'quantity' => '1']]])->assertCreated();
+        $this->postJson('/api/v1/warehouses', ['name' => 'Nuevo almacén', 'address' => 'Dirección del almacén'])->assertSuccessful();
+        $this->assertDatabaseCount('invoices', 1);
+        $this->assertDatabaseHas('warehouses', ['company_id' => $this->company->id, 'name' => 'Nuevo almacén']);
+    }
+
     public function test_notes_do_not_consume_quota_and_correlatives_are_independent(): void
     {
         $invoice = $this->invoice();

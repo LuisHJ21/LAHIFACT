@@ -8,7 +8,7 @@ async function login(page: Page, email = "empresa@lahifact.local") {
     .fill("LahifactLocal2026!");
   await page.getByRole("button", { name: "Ingresar", exact: true }).click();
   await expect(
-    page.getByRole("heading", { name: "Resumen de tu negocio" }),
+    page.getByRole("heading", { name: email === "admin@lahifact.local" ? "Administración" : "Resumen de tu negocio", exact: true }),
   ).toBeVisible();
 }
 async function navigate(page: Page, name: string, mobile: boolean) {
@@ -81,7 +81,7 @@ test("crea y edita un cliente desde el directorio", async ({
   await page.getByRole("button", { name: "Guardar registro" }).click();
   await expect(row).toContainText("987654321");
 });
-test("el administrador puede revisar pagos y abrir una empresa", async ({
+test("el administrador puede revisar pagos y consultar detalle de empresa sin operar", async ({
   page,
   isMobile,
 }) => {
@@ -90,13 +90,16 @@ test("el administrador puede revisar pagos y abrir una empresa", async ({
   await expect(
     page.getByRole("heading", { name: "Administración", exact: true }),
   ).toBeVisible();
-  await page.getByRole("button", { name: "Pagos y vencimientos" }).click();
+  await page.getByRole("button", { name: "Pagos y vencimientos", exact: true }).click();
   await expect(
     page.getByRole("heading", { name: "Programación de pagos" }),
   ).toBeVisible();
   await page.getByRole("button", { name: "Empresas", exact: true }).click();
-  await page.getByRole("button", { name: "Abrir empresa" }).first().click();
+  await page.getByRole("button", { name: "Ver detalle de empresa", exact: true }).first().click();
   await expect(
-    page.getByRole("heading", { name: "Resumen de tu negocio" }),
+    page.getByRole("heading", { name: "Detalle de empresa", exact: true }),
   ).toBeVisible();
+  await page.getByRole("button", { name: "Historial de comprobantes", exact: true }).click();
+  await expect(page.getByRole("button", { name: "Emitir comprobante", exact: true })).toHaveCount(0);
+  await expect(page.getByLabel("Buscar comprobante")).toBeVisible();
 });
